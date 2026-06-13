@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>多角形 判定アプリ</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background: #f5f5f5; text-align: center; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        #canvasOutput { max-width: 100%; height: auto; margin-top: 15px; border: 1px solid #ccc; }
+        .result { font-size: 24px; font-weight: bold; color: #333; margin: 15px 0; padding: 10px; background: #eef9ff; border-radius: 4px; }
+        .loading { color: #666; font-style: italic; }
+    </style>
+    <script async src="https://docs.opencv.org/4.5.4/opencv.js" id="opencv-js" type="text/javascript"></script>
+</head>
+<body>
+
+<div class="container">
+    <h2>多角形（点・辺）判定アプリ</h2>
+    <p id="status" class="loading">OpenCV.js を読み込んでいます...</p>
+    
+    <input type="file" id="fileInput" accept="image/*" disabled>
+    <div id="resultText" class="result">画像をアップロードしてください</div>
+    
+    <div>
+        <canvas id="canvasOutput"></canvas>
+    </div>
+</div>
+
+<script>
+// OpenCV.js の読み込み完了を検知
+document.getElementById('opencv-js').addEventListener('load', () => {
+    document.getElementById('status').textContent = 'OpenCV.js 準備完了！画像をアップロードできます。';
+    document.getElementById('status').className = '';
+    document.getElementById('fileInput').disabled = false;
+});
+
+const fileInput = document.getElementById('fileInput');
+const canvasOutput = document.getElementById('canvasOutput');
+const resultText = document.getElementById('resultText');
+
+fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const img = new Image();
+    img.src = URL.createObjectURL(file);
+    img.onload = () => {
+        // 画像を一度見えないCanvas等に描画してサイズを合わせる
+        canvasOutput.width = img.width;
+        canvasOutput.height = img.height;
+        const ctx = canvasOutput.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+
+        // 多角形解析を実行
+        processImage();
+    };
+});
+
+function processImage() {
+    // 1. OpenCVの行列（Mat）に変換
+    let src = cv.imread(canvasOutput);
+    let gray = new cv.Mat();
+    let blurred = new cv.Mat();
+    let thresh = new cv.Mat();
+
+    // 2. 前処理（グレースケール化、ぼかし、二値化）
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+    cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
+    cv.threshold(blurred, thresh, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+
+    // 3. 輪郭の検出
+    let contours = new cv.MatVector();
+    let hierarchy = new cv.Mat();
+    cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+    let maxArea = 0;
+    let maxContourIdx = -1;
+
+    // 一番大きな図形（ノイズを避けるため）を探す
+    for (let i = 0; i < contours.size(); ++i) {
+        let area = cv.contourArea(contours.get(i));
+        if (area > maxArea) {
+            maxArea = area;
+            maxContourIdx = i;
+        }
+    }
+
+    if (maxContourIdx !== -1) {
+        let cnt = contours.get(maxContourIdx);
+        let approx = new cv.Mat();
+        
+        // 4. Douglas-Peucker アルゴリズムによる多角形近似（頂点を絞り込む）
+        let peri = cv.arcLength(cnt, true);
+        // 0.04（4%）のしきい値。ここを微調整することで判定の感度を変わります
+        cv.approxPolyDP(cnt, approx, 0.04 * peri, true);
+
+        // 頂点数 ＝ 辺の数
+        const vertices = approx.rows; 
+        
+        // 結果の描画（画面上の図形を赤線で囲む）
+        let color = new cv.Scalar(255, 0, 0, 255);
+        cv.drawContours(src, contours, maxContourIdx, color, 3, cv.LINE_8, hierarchy, 0);
+        cv.imshow(canvasOutput, src);
+
+        // 判定結果のテキスト表示
+        let shapeName = `${vertices}角形`;
+        if (vertices === 3) shapeName = "三角形";
+        if (vertices === 4) shapeName = "四角形";
+        if (vertices === 5) shapeName = "五角形";
+        if (vertices > 8) shapeName = "円または多角形";
+
+        resultText.innerHTML = `判定：<span style="color:#ff4757;">${shapeName}</span><br><small>(点: ${vertices}個 / 辺: ${vertices}本)</small>`;
+
+        approx.delete();
+    } else {
+        resultText.textContent = "図形が検出できませんでした。";
+    }
+
+    // メモリ解放
+    src.delete(); gray.delete(); blurred.delete(); thresh.delete();
+    contours.delete(); hierarchy.delete();
+}
+</script>
+</body>
+</html>
